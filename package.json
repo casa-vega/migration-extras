@@ -1,0 +1,18 @@
+{
+  "name": "github-migration-extras",
+  "version": "1.0.0",
+  "description": "Tool for migrating variables, secrets, teams, packages and LFS files",
+  "main": "github-migration.js",
+  "scripts": {
+    "start": "node github-migration.js"
+  },
+  "dependencies": {
+    "@octokit/auth-app": "^4.0.9",
+    "@octokit/rest": "^19.0.7",
+    "csv-parse": "^5.3.0",
+    "csv-stringify": "^6.5.1",
+    "dotenv": "^16.0.3",
+    "libsodium-wrappers": "^0.7.15",
+    "yargs": "^17.7.1"
+  }
+}
