@@ -15,3 +15,7 @@ Everything is run with `cli.js`, and everything is in dry run mode by default.
 ```
 node cli.js migrate <function> 
 ```
+
+## Update `evn.example`
+
+Add you pats to this file and rename to `.env`
