@@ -2,7 +2,7 @@ require('dotenv').config();
 const { Octokit } = require("@octokit/rest");
 
 const token = process.env.TARGET_ORG_PAT;
-const orgName = process.env.TARGET_ORG;
+const orgName = 'amex-dryrun-mobile'
 
 if (!token || !orgName) {
   console.error("Error: TARGET_ORG_PAT and TARGET_ORG must be set in the .env file");
