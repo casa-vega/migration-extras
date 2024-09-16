@@ -18,4 +18,4 @@ node cli.js migrate <function>
 
 ## Update `evn.example`
 
-Add you pats to this file and rename to `.env`
+Add your PATS to this file and rename to `.env`
