@@ -27,14 +27,14 @@ $RepoMigrations = [ordered]@{}
 # =========== Organization: amex-dryrun-org ===========
 
 # === Queuing repo migrations ===
-$MigrationID = ExecAndGetMigrationID { gh gei migrate-repo --skip-releases --github-source-org "amex-eng" --source-repo "m1-ios" --github-target-org "amex-dryrun-mobile" --target-repo "m1-ios" --queue-only --target-repo-visibility internal }
-$RepoMigrations["m1-ios"] = $MigrationID
+$MigrationID = ExecAndGetMigrationID { gh gei migrate-repo --skip-releases --github-source-org "amex-eng" --source-repo "m1-android" --github-target-org "amex-dryrun-mobile" --target-repo "m1-android" --queue-only --target-repo-visibility internal }
+$RepoMigrations["m1-android"] = $MigrationID
 
 
 # =========== Waiting for all migrations to finish for Organization: the-source-org ===========
 
-if ($RepoMigrations["m1-ios"]) { gh gei wait-for-migration --migration-id $RepoMigrations["m1-ios"] }
-if ($RepoMigrations["m1-ios"] -and $lastexitcode -eq 0) { $Succeeded++ } else { $Failed++ }
+if ($RepoMigrations["m1-android"]) { gh gei wait-for-migration --migration-id $RepoMigrations["m1-ios"] }
+if ($RepoMigrations["m1-android"] -and $lastexitcode -eq 0) { $Succeeded++ } else { $Failed++ }
 
 
 Write-Host =============== Summary ===============
