@@ -33,7 +33,7 @@ $RepoMigrations["m1-android"] = $MigrationID
 
 # =========== Waiting for all migrations to finish for Organization: the-source-org ===========
 
-if ($RepoMigrations["m1-android"]) { gh gei wait-for-migration --migration-id $RepoMigrations["m1-ios"] }
+if ($RepoMigrations["m1-android"]) { gh gei wait-for-migration --migration-id $RepoMigrations["m1-android"] }
 if ($RepoMigrations["m1-android"] -and $lastexitcode -eq 0) { $Succeeded++ } else { $Failed++ }
 
 
