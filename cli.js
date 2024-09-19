@@ -29,7 +29,6 @@
 
 const yargs = require("yargs");
 const dotenv = require("dotenv");
-const { Octokit } = require("@octokit/rest");
 
 // Load environment variables from .env file
 dotenv.config();
@@ -66,6 +65,9 @@ async function runMigration(argv, migrationFunction, component) {
       "SOURCE_ORG, TARGET_ORG, SOURCE_TOKEN, and TARGET_TOKEN must be set in the .env file or provided as command line options"
     );
   }
+
+  // Dynamically import Octokit as it's now an ES module
+  const { Octokit } = await import('@octokit/rest');
 
   // Create Octokit instances for source and target orgs
   const sourceOctokit = new Octokit({ 

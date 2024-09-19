@@ -155,19 +155,26 @@ async function checkLFSUsage(octokit, owner, repo) {
  * @param {string} targetOrg - Target organization name
  * @param {Array} lfsRepos - Array of repository names that use LFS
  */
-async function migrateLFS(sourceOrg, targetOrg, lfsRepos) {
+async function migrateLFS(sourceOrg, targetOrg, lfsRepos, dryRun) {
   logger.info(
     `Migrating LFS objects from source organization: ${sourceOrg} to target organization: ${targetOrg}`
   );
 
-  for (const repoName of lfsRepos) {
+  for (const repo of lfsRepos) {
+    const repoName = repo.name || repo; // Ensure repoName is correctly extracted
     logger.info(`Migrating LFS objects for repository: ${repoName}`);
+
+    if (dryRun) {
+      logger.info(`[Dry Run] Would migrate LFS objects for repository: ${repoName}`);
+      continue; // Skip the actual migration during dry run
+    }
+
     try {
       const tempDir = mkdtempSync(join(tmpdir(), `repo-migration-${repoName}`));
       try {
         await cloneRepository(sourceOrg, repoName, tempDir);
         await updateRemoteUrl(targetOrg, repoName, tempDir);
-        await migrateLFSObjects(targetOrg, repoName, tempDir);
+        await migrateLFSPushGit(targetOrg, repoName, tempDir);
       } finally {
         rmSync(tempDir, { recursive: true });
       }
@@ -212,7 +219,7 @@ async function updateRemoteUrl(targetOrg, repoName, tempDir) {
  * @param {string} repoName - Repository name
  * @param {string} tempDir - Temporary directory path
  */
-async function migrateLFSObjects(targetOrg, repoName, tempDir) {
+async function migrateLFSPushGit(targetOrg, repoName, tempDir) {
   logger.info(
     `Updating Git config to use target PAT for LFS push for repository: ${repoName}`
   );

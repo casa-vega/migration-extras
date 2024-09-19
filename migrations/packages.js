@@ -1,9 +1,13 @@
-const fetch = require('node-fetch');
 const fs = require('fs');
-const { graphql } = require("@octokit/graphql");
+//const { graphql } = require("@octokit/graphql");
 const { logger, setVerbosity } = require('../logger');
 require('dotenv').config();
 
+let fetch, graphql;
+(async () => {
+  fetch = (await import('node-fetch')).default;
+  graphql = (await import('@octokit/graphql')).graphql;
+})();
 
 const SOURCE_TOKEN = process.env.SOURCE_TOKEN;
 const TARGET_TOKEN = process.env.TARGET_TOKEN;
