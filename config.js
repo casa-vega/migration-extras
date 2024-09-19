@@ -1,7 +1,7 @@
 /**
  * config.js
  * 
- * This file contains configuration settings for the GitHub Organization Migration CLI.
+ * This file contains configuration settings for the GitHub Migration Extras CLI (unofficial).
  * These settings are not environment-specific and can be version controlled.
  */
 
@@ -25,7 +25,7 @@ module.exports = {
     logLevel: 'info',
   
     // Components available for migration
-    availableComponents: ['variables', 'teams', 'secrets', 'packages', 'lfs-objects'],
+    availableComponents: ['variables', 'teams', 'secrets', 'packages', 'lfs'],
   
     // Default values for CLI options
     defaults: {
