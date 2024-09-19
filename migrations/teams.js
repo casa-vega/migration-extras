@@ -1,4 +1,4 @@
-const { logger, setVerbosity } = require('./logger');
+const { logger, setVerbosity } = require('../logger');
 
 /**
  * Migrates teams from source organization to target organization.

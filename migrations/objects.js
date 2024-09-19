@@ -2,7 +2,7 @@ const { mkdtempSync, rmSync } = require("fs");
 const { join } = require("path");
 const { tmpdir } = require("os");
 const { execSync } = require("child_process");
-const { logger, setVerbosity } = require("./logger");
+const { logger, setVerbosity } = require("../logger");
 
 /**
  * Migrates LFS objects from source organization to target organization.

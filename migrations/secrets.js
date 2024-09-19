@@ -2,7 +2,7 @@ const { writeFileSync, readFileSync } = require("fs");
 const { stringify } = require("csv-stringify/sync");
 const { parse } = require("csv-parse/sync");
 const sodium = require('libsodium-wrappers');
-const { logger, setVerbosity } = require('./logger');
+const { logger, setVerbosity } = require('../logger');
 
 /**
  * Migrates secrets from source organization to target organization.
