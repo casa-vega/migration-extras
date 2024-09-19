@@ -2,9 +2,9 @@
   "name": "github-migration-extras",
   "version": "1.0.0",
   "description": "Tool for migrating variables, secrets, teams, packages and LFS files",
-  "main": "github-migration.js",
+  "main": "cli.js",
   "scripts": {
-    "start": "node github-migration.js"
+    "start": "node cli.js"
   },
   "dependencies": {
     "@octokit/auth-app": "^4.0.9",
