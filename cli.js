@@ -35,11 +35,11 @@ const { Octokit } = require("@octokit/rest");
 dotenv.config();
 
 // Import migration functions
-const { migrateTeams } = require("./teams");
-const { migrateVariables } = require("./variables");
-const { migrateLFSObjects } = require("./objects");
-const { migrateSecrets } = require("./secrets");
-const { migratePackages } = require("./packages");
+const { migrateTeams } = require('./migrations/teams');
+const { migrateVariables } = require('./migrations/variables');
+const { migrateLFSObjects } = require('./migrations/objects');
+const { migrateSecrets } = require('./migrations/secrets');
+const { migratePackages } = require('./migrations/packages');
 
 /**
  * Run a migration function with the provided parameters
