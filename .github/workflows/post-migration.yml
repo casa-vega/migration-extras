@@ -1,0 +1,111 @@
+name: GitHub Migration Action
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_org:
+        description: 'Source GitHub organization'
+        required: true
+      target_org:
+        description: 'Target GitHub organization'
+        required: true
+      dry_run:
+        description: 'Perform a dry run'
+        type: boolean
+        default: true
+      verbose:
+        description: 'Enable verbose output'
+        type: boolean
+        default: false
+      migrate_variables:
+        description: 'Migrate variables'
+        type: boolean
+        default: true
+      migrate_teams:
+        description: 'Migrate teams'
+        type: boolean
+        default: true
+      migrate_secrets:
+        description: 'Migrate secrets'
+        type: boolean
+        default: true
+      migrate_packages:
+        description: 'Migrate packages'
+        type: boolean
+        default: true
+      migrate_lfs:
+        description: 'Migrate LFS objects'
+        type: boolean
+        default: true
+
+env:
+  SOURCE_ORG: ${{ github.event.inputs.source_org }}
+  TARGET_ORG: ${{ github.event.inputs.target_org }}
+  SOURCE_TOKEN: ${{ secrets.SOURCE_TOKEN }}
+  TARGET_TOKEN: ${{ secrets.TARGET_TOKEN }}
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v2
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v2
+      with:
+        node-version: '20'
+
+    - name: Install dependencies
+      run: npm ci
+
+    - name: Migrate Variables
+      if: ${{ github.event.inputs.migrate_variables == 'true' }}
+      run: |
+        node cli.js migrate variables \
+          --source-org ${{ github.event.inputs.source_org }} \
+          --target-org ${{ github.event.inputs.target_org }} \
+          --dry-run ${{ github.event.inputs.dry_run }} \
+          --verbose ${{ github.event.inputs.verbose }}
+
+    - name: Migrate Teams
+      if: ${{ github.event.inputs.migrate_teams == 'true' }}
+      run: |
+        node cli.js migrate teams \
+          --source-org ${{ github.event.inputs.source_org }} \
+          --target-org ${{ github.event.inputs.target_org }} \
+          --dry-run ${{ github.event.inputs.dry_run }} \
+          --verbose ${{ github.event.inputs.verbose }}
+
+    - name: Migrate Secrets
+      if: ${{ github.event.inputs.migrate_secrets == 'true' }}
+      run: |
+        node cli.js migrate secrets \
+          --source-org ${{ github.event.inputs.source_org }} \
+          --target-org ${{ github.event.inputs.target_org }} \
+          --dry-run ${{ github.event.inputs.dry_run }} \
+          --verbose ${{ github.event.inputs.verbose }}
+
+    - name: Migrate Packages
+      if: ${{ github.event.inputs.migrate_packages == 'true' }}
+      run: |
+        node cli.js migrate packages \
+          --source-org ${{ github.event.inputs.source_org }} \
+          --target-org ${{ github.event.inputs.target_org }} \
+          --dry-run ${{ github.event.inputs.dry_run }} \
+          --verbose ${{ github.event.inputs.verbose }}
+
+    - name: Migrate LFS Objects
+      if: ${{ github.event.inputs.migrate_lfs == 'true' }}
+      run: |
+        node cli.js migrate lfs \
+          --source-org ${{ github.event.inputs.source_org }} \
+          --target-org ${{ github.event.inputs.target_org }} \
+          --dry-run ${{ github.event.inputs.dry_run }} \
+          --verbose ${{ github.event.inputs.verbose }}
+
+    - name: Upload migration logs
+      uses: actions/upload-artifact@v2
+      with:
+        name: migration-logs
+        path: logs/migration.log
