@@ -6,6 +6,7 @@ This CLI tool allows you to migrate various components (variables, teams, secret
 
 - add mapping file to team creation
 - fix LFS auth in actions
+- add npm, docker, ruby (same as gradle)
 - add releases gh extension
 
 ## In-flight
