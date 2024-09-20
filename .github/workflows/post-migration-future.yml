@@ -1,4 +1,4 @@
-name: GitHub Migration Action
+name: GitHub Migration Action - ENV
 
 on:
   workflow_dispatch:
