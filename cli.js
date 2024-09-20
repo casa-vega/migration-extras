@@ -1,34 +1,6 @@
-/**
- * cli.js - Command Line Interface for GitHub Organization Migration
- * 
- * This script provides a CLI for migrating various components between GitHub organizations.
- * It includes commands for migrating variables, teams, secrets, packages, and LFS objects.
- * 
- * Usage:
- *   node cli.js migrate <component> [options]
- * 
- * Components:
- *   - variables
- *   - teams
- *   - secrets
- *   - packages
- *   - lfs
- * 
- * Options:
- *   --source-org     Source GitHub organization
- *   --target-org     Target GitHub organization
- *   --dry-run        Perform a dry run without making changes (default: true)
- *   --verbose        Enable verbose output (default: false)
- * 
- * Environment Variables:
- *   SOURCE_ORG: Source GitHub organization (can be overridden by --source-org)
- *   TARGET_ORG: Target GitHub organization (can be overridden by --target-org)
- *   SOURCE_TOKEN: GitHub token for the source organization
- *   TARGET_TOKEN: GitHub token for the target organization
- */
-
 const yargs = require("yargs");
 const dotenv = require("dotenv");
+
 
 // Load environment variables from .env file
 dotenv.config();
@@ -39,6 +11,36 @@ const { migrateVariables } = require('./migrations/variables');
 const { migrateLFSObjects } = require('./migrations/objects');
 const { migrateSecrets } = require('./migrations/secrets');
 const { migratePackages } = require('./migrations/packages');
+
+/**
+ * Creates an Octokit instance with provided authentication token and logging options.
+ * @param {string} token - The authentication token for the Octokit instance.
+ * @param {boolean} verbose - Enable verbose logging for rate limits and abuse limits.
+ * @returns {Octokit} - A configured Octokit instance.
+ */
+async function createOctokitInstance(token, verbose) {
+  const { Octokit } = await import('@octokit/rest');
+  const octokit = new Octokit({
+    auth: token,
+    throttle: {
+      onRateLimit: (retryAfter, options) => {
+        if (verbose) {
+          console.warn(`Request quota exhausted for request ${options.method} ${options.url}`);
+        }
+        if (options.request.retryCount === 0) {
+          console.log(`Retrying after ${retryAfter} seconds!`);
+          return true;
+        }
+      },
+      onAbuseLimit: (retryAfter, options) => {
+        if (verbose) {
+          console.warn(`Abuse detected for request ${options.method} ${options.url}`);
+        }
+      },
+    },
+  });
+  return octokit;
+}
 
 /**
  * Run a migration function with the provided parameters
@@ -66,40 +68,10 @@ async function runMigration(argv, migrationFunction, component) {
     );
   }
 
-  // Dynamically import Octokit as it's now an ES module
-  const { Octokit } = await import('@octokit/rest');
-
-  // Create Octokit instances for source and target orgs
-  const sourceOctokit = new Octokit({ 
-    auth: sourceToken,
-    throttle: {
-      onRateLimit: (retryAfter, options) => {
-        if (verbose) console.warn(`Request quota exhausted for request ${options.method} ${options.url}`);
-        if (options.request.retryCount === 0) { // only retries once
-          console.log(`Retrying after ${retryAfter} seconds!`);
-          return true;
-        }
-      },
-      onAbuseLimit: (retryAfter, options) => {
-        if (verbose) console.warn(`Abuse detected for request ${options.method} ${options.url}`);
-      }
-    }
-  });
-  const targetOctokit = new Octokit({ 
-    auth: targetToken,
-    throttle: {
-      onRateLimit: (retryAfter, options) => {
-        if (verbose) console.warn(`Request quota exhausted for request ${options.method} ${options.url}`);
-        if (options.request.retryCount === 0) { // only retries once
-          console.log(`Retrying after ${retryAfter} seconds!`);
-          return true;
-        }
-      },
-      onAbuseLimit: (retryAfter, options) => {
-        if (verbose) console.warn(`Abuse detected for request ${options.method} ${options.url}`);
-      }
-    }
-  });
+  // Use helper function to create Octokit instances
+  console.log('Creating Octokit instances...');
+  const sourceOctokit = await createOctokitInstance(sourceToken, verbose);
+  const targetOctokit = await createOctokitInstance(targetToken, verbose);
 
   if (verbose) {
     console.log(`Starting migration of ${component} from ${sourceOrgToUse} to ${targetOrgToUse}`);
@@ -124,7 +96,7 @@ async function runMigration(argv, migrationFunction, component) {
     if (verbose) {
       console.error(error.stack);
     }
-    throw error; // Re-throw the error for the main handler to catch
+    throw error;
   }
 }
 
@@ -176,9 +148,16 @@ yargs
       }
     
       try {
+        console.log(`Starting migration of ${argv.component}...`);
         await runMigration(argv, migrationFunction, argv.component);
+        console.log(`Migration of ${argv.component} completed successfully.`);
       } catch (error) {
-        console.error(`Migration of ${argv.component} failed. See above for error details.`);
+        console.error(`Migration of ${argv.component} failed. Error details:`);
+        console.error(error);
+        if (error.stack) {
+          console.error('Stack trace:');
+          console.error(error.stack);
+        }
         process.exit(1);
       }
     },
