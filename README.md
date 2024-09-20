@@ -2,6 +2,15 @@
 
 This CLI tool allows you to migrate various components (variables, teams, secrets, packages, LFS objects) between GitHub organizations. It provides options for performing migrations in dry-run mode, verbose logging, and includes robust error handling and logging.
 
+## TODO
+
+- add mapping file to team creation
+- fix LFS auth in actions
+- add releases gh extension
+
+## In-flight
+- post-migration action with caching, and environments for stepping through
+
 ## Features
 
 - **Variables**: Migrate repository and organization-level variables.
