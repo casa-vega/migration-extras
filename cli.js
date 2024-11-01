@@ -1,8 +1,6 @@
 const yargs = require("yargs");
 const dotenv = require("dotenv");
 
-
-// Load environment variables from .env file
 dotenv.config();
 
 // Import migration functions
@@ -54,6 +52,7 @@ async function runMigration(argv, migrationFunction, component) {
     "source-org": sourceCLI, 
     "target-org": targetCLI, 
     "dry-run": dryRun,
+    "package-type": packageType,
     verbose
   } = argv;
   
@@ -84,6 +83,7 @@ async function runMigration(argv, migrationFunction, component) {
       targetOctokit,
       sourceOrgToUse,
       targetOrgToUse,
+      packageType,
       dryRun,
       verbose
     );
@@ -165,3 +165,4 @@ yargs
   .demandCommand(1, "You need to specify a command to run")
   .help()
   .argv;
+
