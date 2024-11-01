@@ -1,6 +1,7 @@
 const fs = require('fs');
-//const { graphql } = require("@octokit/graphql");
 const { logger, setVerbosity } = require('../logger');
+const { exitOnError } = require('winston');
+const { execSync } = require('child_process');
 require('dotenv').config();
 
 let fetch, graphql;
@@ -23,7 +24,7 @@ const TARGET_TOKEN = process.env.TARGET_TOKEN;
  * @param {boolean} dryRun - Whether to perform a dry run
  * @param {boolean} verbose - Whether to enable verbose logging
  */
-async function migratePackages(sourceOctokit, targetOctokit, sourceOrg, targetOrg, dryRun, verbose) {
+async function migratePackages(sourceOctokit, targetOctokit, sourceOrg, targetOrg, packageType, dryRun, verbose) {
   setVerbosity(verbose);
   logger.info(`Starting package migration process... (Dry Run: ${dryRun})`);
 
@@ -36,7 +37,7 @@ async function migratePackages(sourceOctokit, targetOctokit, sourceOrg, targetOr
     if (!dryRun) {
       preparePackagesDirectory();
     }
-    const packages = await fetchPackages(sourceOctokit, sourceOrg);
+    const packages = await fetchPackages(sourceOctokit, sourceOrg, packageType);
     await processPackages(sourceOctokit, targetOctokit, sourceOrg, targetOrg, packages, dryRun);
   } catch (error) {
     logger.error('Error migrating packages:', error.message);
@@ -60,9 +61,9 @@ function preparePackagesDirectory() {
  * @param {string} sourceOrg - Source organization name
  * @returns {Array} Array of packages
  */
-async function fetchPackages(sourceOctokit, sourceOrg) {
+async function fetchPackages(sourceOctokit, sourceOrg, packageType) {
   const { data: packages } = await sourceOctokit.packages.listPackagesForOrganization({
-    package_type: 'maven',
+    package_type: packageType,
     org: sourceOrg
   });
   logger.info(`Found ${packages.length} packages in organization: ${sourceOrg}`);
@@ -81,11 +82,10 @@ async function fetchPackages(sourceOctokit, sourceOrg) {
  */
 async function processPackages(sourceOctokit, targetOctokit, sourceOrg, targetOrg, packages, dryRun) {
   for (const pkg of packages) {
-    logger.info(`Processing package: ${pkg.name}`);
     try {
       await processPackage(sourceOctokit, targetOctokit, sourceOrg, targetOrg, pkg, dryRun);
     } catch (error) {
-      logger.error(`Error processing package ${pkg.name}:`, error.message);
+      logger.error(`Error processing package ${pkg.name}:`, error);
     }
   }
 }
@@ -101,6 +101,7 @@ async function processPackages(sourceOctokit, targetOctokit, sourceOrg, targetOr
  * @param {boolean} dryRun - Whether to perform a dry run
  */
 async function processPackage(sourceOctokit, targetOctokit, sourceOrg, targetOrg, pkg, dryRun) {
+  logger.info(`Processing package: ${pkg.name} (${pkg.package_type})`);
   if (!await checkTargetRepository(targetOctokit, targetOrg, pkg.repository.name)) {
     return;
   }
@@ -109,7 +110,7 @@ async function processPackage(sourceOctokit, targetOctokit, sourceOrg, targetOrg
     return;
   }
 
-  const versions = await fetchPackageVersions(sourceOctokit, sourceOrg, pkg.name);
+  const versions = await fetchPackageVersions(sourceOctokit, sourceOrg, pkg);
   
   if (dryRun) {
     logger.info(`[Dry Run] Would migrate package: ${pkg.name} from ${sourceOrg} to ${targetOrg}`);
@@ -128,6 +129,7 @@ async function processPackage(sourceOctokit, targetOctokit, sourceOrg, targetOrg
  */
 async function checkTargetRepository(targetOctokit, targetOrg, repoName) {
   try {
+    logger.info(`Checking if repository ${repoName} exists in target organization...`);
     await targetOctokit.repos.get({
       owner: targetOrg,
       repo: repoName
@@ -146,10 +148,11 @@ async function checkTargetRepository(targetOctokit, targetOrg, repoName) {
  * @param {string} packageName - Package name
  * @returns {boolean} Whether the package exists
  */
-async function checkPackageExistsInTarget(targetOctokit, targetOrg, packageName) {
+async function checkPackageExistsInTarget(targetOctokit, targetOrg, packageName, packageType) {
   try {
+    logger.info(`Checking if package ${packageName} exists in target organization...`);
     await targetOctokit.packages.getPackageForOrganization({
-      package_type: 'maven',
+      package_type: packageType,
       package_name: packageName,
       org: targetOrg
     });
@@ -167,13 +170,14 @@ async function checkPackageExistsInTarget(targetOctokit, targetOrg, packageName)
  * @param {string} packageName - Package name
  * @returns {Array} Array of package versions
  */
-async function fetchPackageVersions(sourceOctokit, sourceOrg, packageName) {
+async function fetchPackageVersions(sourceOctokit, sourceOrg, pkg) {
+  logger.info(`Fetching versions of package: ${pkg.name} (${pkg.package_type})`);
   const { data: versions } = await sourceOctokit.packages.getAllPackageVersionsForPackageOwnedByOrg({
-    package_type: 'maven',
-    package_name: packageName,
+    package_type: pkg.package_type,
+    package_name: pkg.name,
     org: sourceOrg
   });
-  logger.info(`Found ${versions.length} versions of the package ${packageName}`);
+  logger.info(`Found ${versions.length} versions of the package ${pkg.name}`);
   return versions;
 }
 
@@ -188,8 +192,7 @@ async function fetchPackageVersions(sourceOctokit, sourceOrg, packageName) {
  * @param {Array} versions - Array of package versions
  */
 async function migratePackageVersions(sourceOctokit, targetOctokit, sourceOrg, targetOrg, pkg, versions, dryRun) {
-  for (const version of versions) {
-    logger.info(`Migrating version: ${version.name}`);
+  for (const version of versions.reverse()) {
     try {
       await migratePackageVersion(sourceOctokit, sourceOrg, targetOrg, pkg, version, dryRun);
     } catch (versionError) {
@@ -211,24 +214,65 @@ async function migratePackageVersion(sourceOctokit, sourceOrg, targetOrg, pkg, v
   logger.info(`Migrating version ${version.name} of package ${pkg.name}`);
 
   try {
-    const packageContent = await getPackageContent(sourceOctokit, sourceOrg, pkg.name, version.name);
+    const packageContent = await getPackageContent(sourceOctokit, sourceOrg, pkg, version.name);
     logger.debug('Package content retrieved successfully');
 
-    const { downloadPackageUrl, uploadPackageUrl } = getPackageUrls(packageContent, sourceOrg, targetOrg, version.name);
+    const { downloadBaseUrl, downloadPackageUrl, uploadPackageUrl } = getPackageUrls(pkg, packageContent, sourceOrg, targetOrg, version.name);
 
-    const filesToDownload = await listPackageAssets('maven', pkg.name, sourceOrg, version.name);
+    let filesToDownload = [];
+    switch (pkg.package_type) {
+      case 'maven':
+      case 'gradle':
+        filesToDownload = await listMavenPackageAssets(pkg.package_type, pkg.name, sourceOrg, version.name);
+        break;
+      case 'npm':
+        filesToDownload = await listNPMPackageAssets(pkg.name, sourceOrg, version.name);
+        break;
+      case 'container':
+        filesToDownload = await listContainerPackageAssets(pkg.name, sourceOrg, version);
+        break;
+      default:
+        logger.warn(`Unsupported package type: ${pkg.package_type}`);
+        return
+    }
+
+    if (!filesToDownload.length) {
+      logger.warn(`No files found for package ${pkg.name} version ${version.name}`);
+      return;
+    }
+
     logger.debug(`Files to download: ${filesToDownload.join(', ')}`);
 
     if (dryRun) {
       logger.info(`[Dry Run] Would download ${filesToDownload.length} files for ${pkg.name} version ${version.name}`);
       logger.info(`[Dry Run] Would upload ${filesToDownload.length} files to ${uploadPackageUrl}`);
     } else {
-      for (const file of filesToDownload) {
-        const fileUrl = `${downloadPackageUrl}/${file}`; // This is the correct URL now
-        logger.debug(`Downloading file from: ${fileUrl}`);
-        await downloadPackageFiles(fileUrl, pkg.name, file); // Pass just the filename, not an array
+      switch (pkg.package_type) {
+        case 'maven':
+        case 'gradle':
+          for (const file of filesToDownload) {
+            const fileUrl = `${downloadPackageUrl}/${file}`; // This is the correct URL now
+            await downloadPackageFiles(fileUrl, pkg.name, file); // Pass just the filename, not an array
+          }
+          await uploadPackageFiles(uploadPackageUrl, pkg.name, filesToDownload);
+          break;
+        case 'npm':
+          for (const file of filesToDownload) {
+            const fileUrl = `${downloadPackageUrl}/${file}`; // This is the correct URL now
+            await downloadPackageFiles(fileUrl, pkg.name, `${pkg.name}-${version.name}.tgz`);
+          }
+          await publishNpmPackage(targetOrg, pkg.name, version.name);
+          break;
+        case 'container':
+          execSync(`docker login ghcr.io -u ${process.env.SOURCE_ORG} -p ${process.env.SOURCE_TOKEN}`);
+          for (const file of filesToDownload) {
+            const fileUrl = `${downloadPackageUrl}/${file}`; // This is the correct URL now
+            await downloadPackageFiles(fileUrl, pkg.name, file);
+          }
+          execSync(`docker login ghcr.io -u ${process.env.TARGET_ORG} -p ${process.env.TARGET_TOKEN}`);
+          await pushContainerPackage(downloadPackageUrl, uploadPackageUrl, pkg.name, filesToDownload, version);
+          break;
       }
-      await uploadPackageFiles(uploadPackageUrl, pkg.name, filesToDownload);
     }
 
     logger.info(`${dryRun ? '[Dry Run] Would migrate' : 'Migrated'} version ${version.name} of ${pkg.name}`);
@@ -245,10 +289,10 @@ async function migratePackageVersion(sourceOctokit, sourceOrg, targetOrg, pkg, v
  * @param {string} versionName - Version name
  * @returns {Object} Package content
  */
-async function getPackageContent(sourceOctokit, sourceOrg, packageName, versionName) {
+async function getPackageContent(sourceOctokit, sourceOrg, pkg, versionName) {
   const { data: packageContent } = await sourceOctokit.packages.getPackageForOrganization({
-    package_type: 'maven',
-    package_name: packageName,
+    package_type: pkg.package_type,
+    package_name: pkg.name,
     org: sourceOrg,
     version: versionName
   });
@@ -264,7 +308,11 @@ async function getPackageContent(sourceOctokit, sourceOrg, packageName, versionN
 async function downloadPackageFiles(fileUrl, packageName, fileName) {
   fs.mkdirSync(`packages/${packageName}`, { recursive: true });
   logger.debug(`Downloading ${fileUrl}`);
-  await downloadFile(fileUrl, `packages/${packageName}/${fileName}`);
+  if (fileUrl.includes('ghcr.io')) {
+    execSync(`docker pull ${fileUrl}`);
+    execSync(`docker save ${fileUrl} -o packages/${packageName}/${fileName}`);
+  }
+  else await downloadFile(fileUrl, `packages/${packageName}/${fileName}`);
 }
 
 /**
@@ -294,6 +342,46 @@ async function uploadPackageFiles(uploadPackageUrl, packageName, filesToUpload) 
     } catch (uploadError) {
       logger.error(`Error uploading file ${file}:`, uploadError.message);
     }
+  }
+}
+
+/**
+ * @param {string} org - Target organization name
+ * @param {string} packageName - Name of the package to publish
+ * @param {string} packageVersion - Version of the package to publish
+ * @returns {Promise<void>}
+ * @throws {Error} If npm publish command fails or if files cannot be accessed
+ */
+async function publishNpmPackage(org, package_name, package_version) {
+  const npmrc = `//npm.pkg.github.com/:_authToken=${TARGET_TOKEN}\nregistry=https://npm.pkg.github.com/${org}`;
+  fs.writeFileSync(`packages/${package_name}/.npmrc`, npmrc);
+  const pwd = `${process.cwd()}/packages/${package_name}`;
+
+  let cwd = `packages/${package_name}`;
+  const tgz = `${package_name}-${package_version}.tgz`;
+
+  execSync(`tar -xzf ${tgz}`, { cwd });
+  cwd = `${cwd}/package`;
+  execSync(`npm publish --ignore-scripts --userconfig ${pwd}/.npmrc`, { cwd });
+
+  fs.rmSync(`packages/${package_name}/package`, { recursive: true });
+}
+
+/**
+ * @param {string} downloadPackageUrl - Base URL for downloading container images
+ * @param {string} uploadPackageUrl - Base URL for uploading container images
+ * @param {string} packageName - Name of the container package
+ * @param {Array<string>} filesToUpload - Array of container image files to upload
+ * @param {Object} version - Version information for the package
+ * @returns {Promise<void>}
+ * @throws {Error} If docker commands fail or if authentication fails
+ */
+async function pushContainerPackage(downloadPackageUrl, uploadPackageUrl, package_name, filesToUpload, version) {
+  for (const file of filesToUpload) {
+    logger.info(`retagging ${downloadPackageUrl}/${file} to ghcr.io/${process.env.TARGET_ORG}/${file}`);
+    execSync(`docker tag ${downloadPackageUrl}/${file} ${uploadPackageUrl}/${file}`);
+    logger.info(`pushing ghcr.io/${process.env.TARGET_ORG}/${file}`);
+    execSync(`docker push ghcr.io/${process.env.TARGET_ORG}/${file}`);
   }
 }
 
@@ -334,11 +422,12 @@ async function downloadFile(url, path) {
     }
   });
   if (!response.ok) {
-    logger.warn(`Failed to download file ${path}, status: ${response.status}, message: ${response.statusText}`);
+    logger.warn(`Failed to download file ${url}, status: ${response.status}, message: ${response.statusText}`);
     return false;
   }
-  const buffer = await response.buffer();
-  fs.writeFileSync(path, buffer);
+  const buffer = await response.arrayBuffer();
+  // fs.writeFileSync(path, buffer);
+  fs.writeFileSync(path, Buffer.from(buffer));
   return true;
 }
 
@@ -350,7 +439,7 @@ async function downloadFile(url, path) {
  * @param {string} versionName - Version name
  * @returns {Object} Object containing package URLs
  */
-function getPackageUrls(packageContent, sourceOrg, targetOrg, versionName) {
+function getPackageUrls(pkg, packageContent, sourceOrg, targetOrg, versionName) {
   logger.debug('Package content:', JSON.stringify(packageContent, null, 2));
 
   const groupId = packageContent.name.split('.').slice(0, -1).join('.');
@@ -363,10 +452,29 @@ function getPackageUrls(packageContent, sourceOrg, targetOrg, versionName) {
   logger.debug(`Version: ${version}`);
   logger.debug(`Repository: ${repository}`);
 
-  const downloadBaseUrl = `https://maven.pkg.github.com/${sourceOrg}/${repository}`;
-  const uploadBaseUrl = `https://maven.pkg.github.com/${targetOrg}/${repository}`;
-  const downloadPackageUrl = `${downloadBaseUrl}/${groupId}/${artifactId}/${version}`;
-  const uploadPackageUrl = `${uploadBaseUrl}/${groupId}/${artifactId}/${version}`;
+  let downloadBaseUrl, uploadBaseUrl, downloadPackageUrl, uploadPackageUrl;
+
+  if (pkg.package_type == 'npm')
+  {
+    downloadBaseUrl = `https://${pkg.package_type}.pkg.github.com`;
+    uploadBaseUrl = `https://${pkg.package_type}.pkg.github.com`;
+    downloadPackageUrl = `${downloadBaseUrl}/download/@${sourceOrg}/${pkg.name}/${versionName}`;
+    uploadPackageUrl = `${uploadBaseUrl}/@${targetOrg}/${repository}`;
+  }
+  else if (pkg.package_type == 'container')
+  {
+    downloadBaseUrl = `ghcr.io`;
+    uploadBaseUrl = `ghcr.io`;
+    downloadPackageUrl = `${downloadBaseUrl}/${sourceOrg}`;
+    uploadPackageUrl = `${uploadBaseUrl}/${targetOrg}`;
+  }
+  else
+  {
+    downloadBaseUrl = `https://${pkg.package_type}.pkg.github.com/${sourceOrg}/${repository}`;
+    uploadBaseUrl = `https://${pkg.package_type}.pkg.github.com/${targetOrg}/${repository}`;
+    downloadPackageUrl = `${downloadBaseUrl}/${groupId}/${artifactId}/${version}`;
+    uploadPackageUrl = `${uploadBaseUrl}/${groupId}/${artifactId}/${version}`;
+  }
 
   logger.debug(`Download Base URL: ${downloadBaseUrl}`);
   logger.debug(`Upload Base URL: ${uploadBaseUrl}`);
@@ -374,6 +482,38 @@ function getPackageUrls(packageContent, sourceOrg, targetOrg, versionName) {
   logger.debug(`Upload Package URL: ${uploadPackageUrl}`);
 
   return { groupId, artifactId, repository, downloadBaseUrl, uploadBaseUrl, downloadPackageUrl, uploadPackageUrl };
+}
+
+async function listNPMPackageAssets(package_name, org, package_version) {
+  const npmUrl = `https://npm.pkg.github.com/@${org}/${package_name}`;
+  const response = await fetch(npmUrl, {
+    headers: {
+      Authorization: `token ${SOURCE_TOKEN}`
+    }
+  });
+
+  if (!response.ok) {
+    logger.warn(`Failed to fetch package ${package_name}, status: ${response.status}, message: ${response.statusText}`);
+    return [];
+  }
+
+  const npmJson = await response.json();
+  const version = npmJson.versions[package_version];
+  if (!version) {
+    logger.warn(`Version ${package_version} not found for package ${package_name}`);
+    return [];
+  }
+
+  const distTarball = version.dist.tarball.split('/').pop(-1);
+  return [distTarball];
+}
+
+async function listContainerPackageAssets(package_name, org, version) {
+  let files = []
+  for (const tag of version.metadata.container.tags.reverse()) {
+    files.push(`${package_name}:${tag}`);
+  }
+  return files;
 }
 
 /**
@@ -384,7 +524,7 @@ function getPackageUrls(packageContent, sourceOrg, targetOrg, versionName) {
  * @param {string} package_version - Package version
  * @returns {Array} Array of asset names
  */
-async function listPackageAssets(package_type, package_name, org, package_version) {
+async function listMavenPackageAssets(package_type, package_name, org, package_version) {
   const query = `
     query listPackageAssets($org: String!, $packageName: String!, $version: String!) {
       organization(login: $org) {
@@ -423,7 +563,7 @@ async function listPackageAssets(package_type, package_name, org, package_versio
       logger.warn(`No package found for ${package_name} in org ${org}`);
       return [];
     }
-
+    
     const packageVersion = result.organization.packages.nodes[0].version;
     if (!packageVersion) {
       logger.warn(`Version ${package_version} not found for package ${package_name} in org ${org}`);
