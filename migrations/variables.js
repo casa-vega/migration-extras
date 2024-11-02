@@ -1,4 +1,4 @@
-const { logger, setVerbosity } = require('../logger');
+import {logger, setVerbosity} from '../logger.js';
 
 /**
  * Migrates repository variables.
@@ -109,7 +109,7 @@ async function migrateOrgVariable(targetOctokit, targetOrg, variable, dryRun, va
  * @param {boolean} dryRun - Whether to perform a dry run
  * @param {boolean} verbose - Whether to enable verbose logging
  */
-async function migrateVariables(sourceOctokit, targetOctokit, sourceOrg, targetOrg, dryRun, verbose) {
+export async function migrateVariables(sourceOctokit, targetOctokit, sourceOrg, targetOrg, dryRun, verbose) {
   setVerbosity(verbose);
   
   const variableMigrations = {
@@ -158,5 +158,3 @@ async function migrateVariable(targetOctokit, targetOrg, repoName, variable, dry
   }
   variableMigrations.variables.push({ repo: repoName, name: variable.name, value: variable.value });
 }
-
-module.exports = { migrateVariables };

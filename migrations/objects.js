@@ -1,8 +1,8 @@
-const { mkdtempSync, rmSync } = require("fs");
-const { join } = require("path");
-const { tmpdir } = require("os");
-const { execSync } = require("child_process");
-const { logger, setVerbosity } = require("../logger");
+import {mkdtempSync, rmSync} from "fs";
+import {join} from "path";
+import {tmpdir} from "os";
+import {execSync} from "child_process";
+import {logger, setVerbosity} from '../logger.js';
 
 /**
  * Migrates LFS objects from source organization to target organization.
@@ -13,7 +13,7 @@ const { logger, setVerbosity } = require("../logger");
  * @param {boolean} dryRun - Whether to perform a dry run
  * @param {boolean} verbose - Whether to enable verbose logging
  */
-async function migrateLFSObjects(
+export async function migrateLFSObjects(
   sourceOctokit,
   targetOctokit,
   sourceOrg,
@@ -237,5 +237,3 @@ async function migrateLFSPushGit(targetOrg, repoName, tempDir) {
     `cd ${tempDir} && git config --unset-all lfs.https://github.com/${targetOrg}/${repoName}.git.basic && git config --unset-all lfs.https://github.com/${targetOrg}/${repoName}.git.username && git config --unset-all lfs.https://github.com/${targetOrg}/${repoName}.git.password`
   );
 }
-
-module.exports = { migrateLFSObjects };

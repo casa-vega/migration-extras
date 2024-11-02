@@ -1,8 +1,8 @@
-const { writeFileSync, readFileSync } = require("fs");
-const { stringify } = require("csv-stringify/sync");
-const { parse } = require("csv-parse/sync");
-const sodium = require('libsodium-wrappers');
-const { logger, setVerbosity } = require('../logger');
+import {writeFileSync, readFileSync} from "fs";
+import {stringify} from "csv-stringify/sync";
+import {parse} from "csv-parse/sync";
+import sodium from 'libsodium-wrappers';
+import {logger, setVerbosity} from '../logger.js';
 
 /**
  * Migrates secrets from source organization to target organization.
@@ -13,7 +13,7 @@ const { logger, setVerbosity } = require('../logger');
  * @param {boolean} dryRun - Whether to perform a dry run
  * @param {boolean} verbose - Whether to enable verbose logging
  */
-async function migrateSecrets(sourceOctokit, targetOctokit, sourceOrgToUse, targetOrgToUse, dryRun, verbose) {
+export async function migrateSecrets(sourceOctokit, targetOctokit, sourceOrgToUse, targetOrgToUse, dryRun, verbose) {
     setVerbosity(verbose);
     logger.info(`Starting secrets migration from ${sourceOrgToUse} to ${targetOrgToUse}`);
     logger.info(`Dry run: ${dryRun}`);
@@ -266,5 +266,3 @@ async function createOrUpdateOrgSecret(targetOctokit, targetOrgToUse, name, encr
     });
     logger.info(`Created/Updated secret: ${name} in organization ${targetOrgToUse}`);
 }
-
-module.exports = { migrateSecrets };

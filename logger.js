@@ -1,14 +1,15 @@
-const winston = require('winston');
-const path = require('path');
+import winston from 'winston';
+import path from 'path';
 
 // Create logs directory if it doesn't exist
-const fs = require('fs');
+import fs from 'fs';
+
 const logDir = 'logs';
 if (!fs.existsSync(logDir)) {
     fs.mkdirSync(logDir);
 }
 
-const logger = winston.createLogger({
+export const logger = winston.createLogger({
     level: 'info',
     format: winston.format.combine(
         winston.format.timestamp(),
@@ -28,8 +29,6 @@ const logger = winston.createLogger({
     ]
 });
 
-function setVerbosity(verbose) {
+export function setVerbosity(verbose) {
     logger.level = verbose ? 'debug' : 'info';
 }
-
-module.exports = { logger, setVerbosity };

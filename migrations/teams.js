@@ -1,4 +1,4 @@
-const { logger, setVerbosity } = require('../logger');
+import {logger, setVerbosity} from '../logger.js';
 
 /**
  * Migrates teams from source organization to target organization.
@@ -9,7 +9,7 @@ const { logger, setVerbosity } = require('../logger');
  * @param {boolean} dryRun - Whether to perform a dry run
  * @param {boolean} verbose - Whether to enable verbose logging
  */
-async function migrateTeams(sourceOctokit, targetOctokit, sourceOrg, targetOrg, dryRun, verbose) {
+export async function migrateTeams(sourceOctokit, targetOctokit, sourceOrg, targetOrg, dryRun, verbose) {
   setVerbosity(verbose);
   logger.info('Starting team migration process...');
 
@@ -363,5 +363,3 @@ function displayTeamHierarchy(teams, teamMap, parentSlug = null, level = 0) {
 function findIdpGroupByName(groups, name) {
   return groups.find(group => group.group_name === name);
 }
-
-module.exports = { migrateTeams };

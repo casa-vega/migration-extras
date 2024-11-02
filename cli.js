@@ -1,14 +1,18 @@
-const yargs = require("yargs");
-const dotenv = require("dotenv");
+
+import yargs from 'yargs'
+import { hideBin } from 'yargs/helpers'
+import dotenv from "dotenv";
+import { Octokit } from "@octokit/rest";
+import { graphql } from '@octokit/graphql';
+import { ProxyAgent, fetch as undiciFetch } from "undici";
+
+import {migrateTeams} from './migrations/teams.js';
+import {migrateVariables} from './migrations/variables.js';
+import {migrateLFSObjects} from './migrations/objects.js';
+import {migrateSecrets} from './migrations/secrets.js';
+import {migratePackages} from './migrations/packages.js';
 
 dotenv.config();
-
-// Import migration functions
-const { migrateTeams } = require('./migrations/teams');
-const { migrateVariables } = require('./migrations/variables');
-const { migrateLFSObjects } = require('./migrations/objects');
-const { migrateSecrets } = require('./migrations/secrets');
-const { migratePackages } = require('./migrations/packages');
 
 /**
  * Creates an Octokit instance with provided authentication token and logging options.
@@ -17,8 +21,20 @@ const { migratePackages } = require('./migrations/packages');
  * @returns {Octokit} - A configured Octokit instance.
  */
 async function createOctokitInstance(token, verbose) {
-  const { Octokit } = await import('@octokit/rest');
+
+  const myFetch = (url, opts) => {
+    return undiciFetch(url, {
+      ...opts,
+      dispatcher: new ProxyAgent({
+        uri: process.env.HTTPS_PROXY,
+        keepAliveTimeout: 10,
+        keepAliveMaxTimeout: 10,
+      }),
+    });
+  };
+
   const octokit = new Octokit({
+    request: { fetch: myFetch },
     auth: token,
     throttle: {
       onRateLimit: (retryAfter, options) => {
@@ -37,7 +53,44 @@ async function createOctokitInstance(token, verbose) {
       },
     },
   });
+  console.info(octokit.token)
   return octokit;
+}
+
+async function createGraphQLInstance(token, verbose) {
+  const myFetch = (url, opts) => {
+    return undiciFetch(url, {
+      ...opts,
+      dispatcher: new ProxyAgent({
+        uri: process.env.HTTPS_PROXY,
+        keepAliveTimeout: 10,
+        keepAliveMaxTimeout: 10,
+      }),
+    });
+  };
+
+  return graphql.defaults({
+    headers: {
+      authorization: `token ${token}`,
+    },
+    request: { fetch: myFetch },
+    throttle: {
+      onRateLimit: (retryAfter, options) => {
+        if (verbose) {
+          console.warn(`Request quota exhausted for request ${options.method} ${options.url}`);
+        }
+        if (options.request.retryCount === 0) {
+          console.log(`Retrying after ${retryAfter} seconds!`);
+          return true;
+        }
+      },
+      onAbuseLimit: (retryAfter, options) => {
+        if (verbose) {
+          console.warn(`Abuse detected for request ${options.method} ${options.url}`);
+        }
+      },
+    },
+  });
 }
 
 /**
@@ -71,6 +124,8 @@ async function runMigration(argv, migrationFunction, component) {
   console.log('Creating Octokit instances...');
   const sourceOctokit = await createOctokitInstance(sourceToken, verbose);
   const targetOctokit = await createOctokitInstance(targetToken, verbose);
+  const sourceGraphQL = await createGraphQLInstance(sourceToken, verbose);
+  const targetGraphQL = await createGraphQLInstance(targetToken, verbose);
 
   if (verbose) {
     console.log(`Starting migration of ${component} from ${sourceOrgToUse} to ${targetOrgToUse}`);
@@ -81,6 +136,8 @@ async function runMigration(argv, migrationFunction, component) {
     await migrationFunction(
       sourceOctokit,
       targetOctokit,
+      sourceGraphQL,
+      targetGraphQL,
       sourceOrgToUse,
       targetOrgToUse,
       packageType,
@@ -110,7 +167,7 @@ const migrationFunctions = {
 };
 
 // CLI commands
-yargs
+yargs(hideBin(process.argv))
   .command({
     command: "migrate <component>",
     describe: "Migrate data from source org to target org",
