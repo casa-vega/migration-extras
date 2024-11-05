@@ -212,6 +212,8 @@ async function migratePackageVersions(sourceOctokit, targetOctokit, sourceGraphQ
 /**
  * Migrates a single version of a package.
  * @param {Object} sourceOctokit - Octokit instance for source organization
+ * @param {string} sourceGraphQL - Source GraphQL client
+ * @param {string} targetGraphQL - Target GraphQL client
  * @param {string} sourceOrg - Source organization name
  * @param {string} targetOrg - Target organization name
  * @param {Object} pkg - Package object
@@ -241,7 +243,7 @@ async function migratePackageVersion(sourceOctokit, sourceGraphQL, targetGraphQL
         break;
       default:
         logger.warn(`Unsupported package type: ${pkg.package_type}`);
-        return
+        return;
     }
 
     if (!filesToDownload.length) {
@@ -258,15 +260,12 @@ async function migratePackageVersion(sourceOctokit, sourceGraphQL, targetGraphQL
       switch (pkg.package_type) {
         case 'maven':
         case 'gradle':
-          for (const file of filesToDownload) {
-            const fileUrl = `${downloadPackageUrl}/${file}`; // This is the correct URL now
-            await downloadPackageFiles(fileUrl, pkg.name, file); // Pass just the filename, not an array
-          }
-          await uploadPackageFiles(uploadPackageUrl, pkg.name, filesToDownload);
+          await downloadMavenFilesParallel(downloadPackageUrl, pkg.name, filesToDownload);
+          await uploadMavenFilesParallel(uploadPackageUrl, pkg.name, filesToDownload);
           break;
         case 'npm':
           for (const file of filesToDownload) {
-            const fileUrl = `${downloadPackageUrl}/${file}`; // This is the correct URL now
+            const fileUrl = `${downloadPackageUrl}/${file}`; 
             await downloadPackageFiles(fileUrl, pkg.name, `${pkg.name}-${version.name}.tgz`);
           }
           await publishNpmPackage(targetOrg, pkg.name, version.name);
@@ -274,7 +273,7 @@ async function migratePackageVersion(sourceOctokit, sourceGraphQL, targetGraphQL
         case 'container':
           execSync(`docker login ghcr.io -u ${process.env.SOURCE_ORG} -p ${process.env.SOURCE_TOKEN}`);
           for (const file of filesToDownload) {
-            const fileUrl = `${downloadPackageUrl}/${file}`; // This is the correct URL now
+            const fileUrl = `${downloadPackageUrl}/${file}`;
             await downloadPackageFiles(fileUrl, pkg.name, file);
           }
           execSync(`docker login ghcr.io -u ${process.env.TARGET_ORG} -p ${process.env.TARGET_TOKEN}`);
@@ -286,7 +285,104 @@ async function migratePackageVersion(sourceOctokit, sourceGraphQL, targetGraphQL
     logger.info(`${dryRun ? '[Dry Run] Would migrate' : 'Migrated'} version ${version.name} of ${pkg.name}`);
   } catch (error) {
     logger.error(`Error migrating version ${version.name} of ${pkg.name}: ${error.message}`);
+    if (error.stack) {
+      logger.debug(`Stack trace: ${error.stack}`);
+    }
+    throw error; // Re-throw to be handled by the caller
   }
+}
+
+/**
+ * Downloads Maven package files in parallel with rate limiting
+ * @param {string} downloadPackageUrl - Base URL for downloading
+ * @param {string} packageName - Package name
+ * @param {Array} filesToDownload - Array of files to download
+ */
+async function downloadMavenFilesParallel(downloadPackageUrl, packageName, filesToDownload) {
+  const concurrency = parseInt(process.env.MAVEN_CONCURRENCY || '5');
+  fs.mkdirSync(`packages/${packageName}`, { recursive: true });
+  const chunks = [];
+  
+  // Split files into chunks based on concurrency
+  for (let i = 0; i < filesToDownload.length; i += concurrency) {
+    chunks.push(filesToDownload.slice(i, i + concurrency));
+  }
+
+  logger.info(`Downloading files with concurrency of ${concurrency}`);
+
+  // Process each chunk in parallel
+  for (const chunk of chunks) {
+    await Promise.all(chunk.map(async (file) => {
+      try {
+        const fileUrl = `${downloadPackageUrl}/${file}`;
+        logger.debug(`Downloading ${fileUrl}`);
+        
+        const response = await myFetch(fileUrl, {
+          headers: {
+            Authorization: `token ${SOURCE_TOKEN}`
+          }
+        });
+
+        if (!response.ok) {
+          throw new Error(`Failed to download file ${fileUrl}, status: ${response.status}`);
+        }
+
+        const buffer = await response.arrayBuffer();
+        fs.writeFileSync(`packages/${packageName}/${file}`, Buffer.from(buffer));
+        logger.debug(`Successfully downloaded ${file}`);
+      } catch (downloadError) {
+        logger.error(`Error downloading file ${file}:`, downloadError.message);
+        throw downloadError;
+      }
+    }));
+  }
+  
+  logger.info(`Successfully downloaded ${filesToDownload.length} files in parallel`);
+}
+
+/**
+ * Uploads Maven package files in parallel with rate limiting
+ * @param {string} uploadPackageUrl - URL to upload package files to
+ * @param {string} packageName - Package name
+ * @param {Array} filesToUpload - Array of files to upload
+ */
+async function uploadMavenFilesParallel(uploadPackageUrl, packageName, filesToUpload) {
+  const concurrency = parseInt(process.env.MAVEN_CONCURRENCY || '5');
+  const chunks = [];
+  
+  // Split files into chunks based on concurrency
+  for (let i = 0; i < filesToUpload.length; i += concurrency) {
+    chunks.push(filesToUpload.slice(i, i + concurrency));
+  }
+
+  logger.info(`Uploading files with concurrency of ${concurrency}`);
+
+  // Process each chunk in parallel
+  for (const chunk of chunks) {
+    await Promise.all(chunk.map(async (file) => {
+      try {
+        const fileContent = fs.readFileSync(`packages/${packageName}/${file}`);
+        const headers = getUploadHeaders(file, fileContent);
+        
+        logger.debug(`Uploading to ${uploadPackageUrl}/${file}`);
+        const response = await myFetch(`${uploadPackageUrl}/${file}`, {
+          method: 'PUT',
+          headers: headers,
+          body: fileContent
+        });
+
+        if (!response.ok) {
+          throw new Error(`Failed to upload file ${file}, status: ${response.status}, message: ${response.statusText}`);
+        }
+        logger.debug(`Successfully uploaded ${file}`);
+      } catch (uploadError) {
+        logger.error(`Error uploading file ${file}:`, uploadError.message);
+        throw uploadError;
+      }
+    }));
+  }
+  
+  logger.info(`Successfully uploaded ${filesToUpload.length} files in parallel`);
 }
 
 /**
@@ -423,7 +519,7 @@ function getUploadHeaders(file, fileContent) {
  * @returns {boolean} Whether the download was successful
  */
 async function downloadFile(url, path) {
-  console.log(url)
+  logger.info(url)
   const response = await myFetch(url, {
     headers: {
       Authorization: `token ${SOURCE_TOKEN}`
