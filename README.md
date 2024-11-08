@@ -96,6 +96,12 @@ node cli.js migrate variables --source-org my-source-org --target-org my-target-
 node cli.js migrate teams --verbose --dry-run=false
 ```
 
+#### Migrate packages (really run)
+```
+node cli.js migrate packages --package-type maven --dry-run false --verbose
+```
+
+
 ## Logging
 Logs for the migration are stored in the logs/migration.log file. The logger is powered by winston and can be customized through the config.js file.
 
