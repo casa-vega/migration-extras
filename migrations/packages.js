@@ -630,12 +630,16 @@ async function listContainerPackageAssets(package_name, org, version) {
  */
 async function listMavenPackageAssets(package_type, package_name, sourceGraphQL, targetGraphQL, org, package_version) {
   const query = `
-    query listPackageAssets($org: String!, $packageName: String!, $version: String!) {
+    query listPackageAssets($org: String!, $packageName: String!, $version: String!, $cursor: String) {
       organization(login: $org) {
         packages(first: 1, names: [$packageName]) {
           nodes {
             version(version: $version) {
-              files(first: 100) {
+              files(first: 100, after: $cursor) {
+                pageInfo {
+                  hasNextPage
+                  endCursor
+                }
                 nodes {
                   name
                 }
@@ -651,26 +655,50 @@ async function listMavenPackageAssets(package_type, package_name, sourceGraphQL,
     packageName: package_name,
     version: package_version,
   };
+
   logger.info(JSON.stringify(variables, null, 2));
+  let allAssets = [];
+
   try {
     logger.debug(`Fetching assets for package ${package_name} version ${package_version} in org ${org}`);
     
-    const result = await sourceGraphQL(query, variables);
+    let hasNextPage = true;
+    let cursor = null;
 
-    if (!result.organization || !result.organization.packages.nodes.length) {
-      logger.warn(`No package found for ${package_name} in org ${org}`);
-      return [];
-    }
-    
-    const packageVersion = result.organization.packages.nodes[0].version;
-    if (!packageVersion) {
-      logger.warn(`Version ${package_version} not found for package ${package_name} in org ${org}`);
-      return [];
+    while (hasNextPage) {
+      // Update cursor in variables if we have one
+      const currentVariables = { ...variables };
+      if (cursor) {
+        currentVariables.cursor = cursor;
+      }
+
+      const result = await sourceGraphQL(query, currentVariables);
+      
+      if (!result.organization || !result.organization.packages.nodes.length) {
+        logger.warn(`No package found for ${package_name} in org ${org}`);
+        return [];
+      }
+
+      const packageVersion = result.organization.packages.nodes[0].version;
+      if (!packageVersion) {
+        logger.warn(`Version ${package_version} not found for package ${package_name} in org ${org}`);
+        return [];
+      }
+
+      const filesData = packageVersion.files;
+      const currentPageAssets = filesData.nodes.map(node => node.name);
+      allAssets = allAssets.concat(currentPageAssets);
+
+      // Update pagination info
+      hasNextPage = filesData.pageInfo.hasNextPage;
+      cursor = filesData.pageInfo.endCursor;
+
+      logger.debug(`Fetched page with ${currentPageAssets.length} assets. Has next page: ${hasNextPage}`);
     }
 
-    const assets = packageVersion.files.nodes.map(node => node.name);
-    logger.info(`Found ${assets.length} assets for package ${package_name} version ${package_version}`);
-    return assets;
+    logger.info(`Found total ${allAssets.length} assets for package ${package_name} version ${package_version}`);
+    return allAssets;
+
   } catch (error) {
     logger.error(`Error listing package assets for ${package_name} version ${package_version}:`, error);
     if (error.errors) {

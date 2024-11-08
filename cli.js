@@ -9,7 +9,6 @@ import { ProxyAgent, fetch as undiciFetch } from "undici";
 import {migrateTeams} from './migrations/teams.js';
 import {migrateVariables} from './migrations/variables.js';
 import {migrateLFSObjects} from './migrations/objects.js';
-import {migrateSecrets} from './migrations/secrets.js';
 import {migratePackages} from './migrations/packages.js';
 
 dotenv.config();
@@ -161,7 +160,6 @@ async function runMigration(argv, migrationFunction, component) {
 const migrationFunctions = {
   variables: migrateVariables,
   teams: migrateTeams,
-  secrets: migrateSecrets,
   packages: migratePackages,
   lfs: migrateLFSObjects,
 };
