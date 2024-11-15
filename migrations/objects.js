@@ -16,8 +16,11 @@ import {logger, setVerbosity} from '../logger.js';
 export async function migrateLFSObjects(
   sourceOctokit,
   targetOctokit,
+  sourceGraphQL,
+  targetGraphQL,
   sourceOrg,
   targetOrg,
+  packageType,
   dryRun,
   verbose
 ) {
@@ -33,21 +36,36 @@ export async function migrateLFSObjects(
   };
 
   try {
+    // First, analyze all repositories
     const repos = await fetchRepositories(sourceOctokit, sourceOrg);
     await checkLFSUsageForRepos(sourceOctokit, sourceOrg, repos, result);
 
-    if (!dryRun) {
-      const lfsRepos = result.repositories
-        .filter((repo) => repo.usesLFS)
-        .map((repo) => repo.name);
-      await migrateLFS(sourceOrg, targetOrg, lfsRepos);
+    // Print analysis results before proceeding
+    logger.info("Repository analysis completed. Results:");
+    logger.info(JSON.stringify(result, null, 2));
+
+    // Proceed with migration if not a dry run and there are LFS repos
+    const lfsRepos = result.repositories.filter((repo) => repo.usesLFS);
+    
+    if (lfsRepos.length === 0) {
+      logger.info("No repositories with LFS found. Nothing to migrate.");
+      return;
     }
 
-    logger.info("LFS objects migration completed");
-    logger.info(JSON.stringify(result, null, 2));
+    logger.info(`Found ${lfsRepos.length} repositories using LFS`);
+    
+    if (!dryRun) {
+      logger.info("\nStarting LFS migration for identified repositories...");
+      const repoNames = lfsRepos.map((repo) => repo.name);
+      await migrateLFS(sourceOrg, targetOrg, repoNames, dryRun);
+      logger.info("LFS objects migration completed successfully");
+    } else {
+      logger.info("\nDry run - no migrations performed");
+    }
   } catch (error) {
     logger.error("Error during LFS objects migration:", error.message);
     result.errors.push({ message: error.message });
+    throw error;
   }
 }
 
@@ -196,7 +214,8 @@ async function migrateLFS(sourceOrg, targetOrg, lfsRepos, dryRun) {
 async function cloneRepository(sourceOrg, repoName, tempDir) {
   logger.info(`Cloning repository: ${repoName}`);
   execSync(
-    `git clone https://x-access-token:${process.env.SOURCE_ORG_PAT}@github.com/${sourceOrg}/${repoName}.git ${tempDir}`
+    `git clone https://x-access-token:${process.env.SOURCE_TOKEN}@github.com/${sourceOrg}/${repoName}.git ${tempDir}`,
+    { stdio: 'inherit', encoding: 'utf-8' }
   );
 }
 
@@ -228,7 +247,9 @@ async function migrateLFSPushGit(targetOrg, repoName, tempDir) {
   );
 
   logger.info(`Migrating LFS objects for repository: ${repoName}`);
-  execSync(`cd ${tempDir} && git lfs fetch --all && git lfs push --all origin`);
+  execSync(`cd ${tempDir} && git lfs fetch --all && git lfs push --all origin`,
+    { stdio: 'inherit', encoding: 'utf-8' }
+  );
 
   logger.info(
     `Resetting Git config after LFS push for repository: ${repoName}`

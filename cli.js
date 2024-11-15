@@ -52,7 +52,6 @@ async function createOctokitInstance(token, verbose) {
       },
     },
   });
-  console.info(octokit.token)
   return octokit;
 }
 
@@ -119,7 +118,6 @@ async function runMigration(argv, migrationFunction, component) {
     );
   }
 
-  // Use helper function to create Octokit instances
   console.log('Creating Octokit instances...');
   const sourceOctokit = await createOctokitInstance(sourceToken, verbose);
   const targetOctokit = await createOctokitInstance(targetToken, verbose);
@@ -143,16 +141,35 @@ async function runMigration(argv, migrationFunction, component) {
       dryRun,
       verbose
     );
-
-    if (verbose) {
-      console.log(`Migration of ${component} completed successfully`);
-    }
   } catch (error) {
     console.error(`Migration of ${component} failed: ${error.message}`);
     if (verbose) {
       console.error(error.stack);
     }
     throw error;
+  }
+}
+
+// Update the command handler with better error logging
+handler: async (argv) => {
+  const migrationFunction = migrationFunctions[argv.component];
+  if (!migrationFunction) {
+    console.error(`Unknown component: ${argv.component}`);
+    process.exit(1);
+  }
+
+  try {
+    console.log(`Starting migration of ${argv.component}...`);
+    await runMigration(argv, migrationFunction, argv.component);
+    console.log(`Migration of ${argv.component} completed successfully.`);
+  } catch (error) {
+    console.error(`Migration failed. Error details:`);
+    console.error(error.message);
+    if (error.stack) {
+      console.error('Stack trace:');
+      console.error(error.stack);
+    }
+    process.exit(1);
   }
 }
 
