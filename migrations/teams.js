@@ -1,57 +1,88 @@
 import {logger, setVerbosity} from '../logger.js';
+import fs from 'fs';
+import { parse } from 'csv-parse/sync';
+
+/**
+ * Reads and parses the username mapping CSV file.
+ * @param {string} csvPath - Path to the CSV file
+ * @returns {Map} Map of source usernames to target usernames
+ */
+function loadUsernameMappings(csvPath) {
+  try {
+    if (!csvPath) {
+      logger.info('No username mapping CSV provided, proceeding with original usernames');
+      return new Map();
+    }
+
+    const fileContent = fs.readFileSync(csvPath, 'utf-8');
+    const records = parse(fileContent, {
+      columns: true,
+      skip_empty_lines: true,
+      trim: true
+    });
+
+    const mappings = new Map();
+    records.forEach(record => {
+      const sourceUsername = record.sourceUsername || record['source username'];
+      const targetUsername = record.targetUsername || record['target username'];
+      
+      if (sourceUsername && targetUsername) {
+        mappings.set(sourceUsername, targetUsername);
+        logger.debug(`Loaded username mapping: ${sourceUsername} → ${targetUsername}`);
+      }
+    });
+
+    logger.info(`Loaded ${mappings.size} username mappings from CSV`);
+    return mappings;
+  } catch (error) {
+    logger.error(`Error loading username mappings: ${error.message}`);
+    return new Map();
+  }
+}
 
 /**
  * Migrates teams from source organization to target organization.
  * @param {Object} sourceOctokit - Octokit instance for source organization
  * @param {Object} targetOctokit - Octokit instance for target organization
+ * @param {Object} sourceGraphQL - GraphQL client for source (not used)
+ * @param {Object} targetGraphQL - GraphQL client for target (not used)
  * @param {string} sourceOrg - Source organization name
  * @param {string} targetOrg - Target organization name
+ * @param {string} packageType - Package type (not used)
  * @param {boolean} dryRun - Whether to perform a dry run
  * @param {boolean} verbose - Whether to enable verbose logging
+ * @param {string} [usernameMappingFile] - Path to CSV file containing username mappings
  */
-export async function migrateTeams(sourceOctokit, targetOctokit, sourceOrg, targetOrg, dryRun, verbose) {
+export async function migrateTeams(
+  sourceOctokit, 
+  targetOctokit, 
+  sourceGraphQL,
+  targetGraphQL,
+  sourceOrg, 
+  targetOrg,
+  packageType,
+  dryRun, 
+  verbose,
+  usernameMappingFile
+) {
   setVerbosity(verbose);
   logger.info('Starting team migration process...');
 
   try {
-    const targetIdpGroups = await getTargetIdpGroupMappings(targetOctokit, targetOrg, dryRun);
+    const usernameMappings = loadUsernameMappings(usernameMappingFile);
     const teams = await fetchSourceTeams(sourceOctokit, sourceOrg);
     const sortedTeams = sortTeamsByHierarchy(teams);
     const teamMap = new Map();
 
     for (const team of sortedTeams) {
-      await processTeam(sourceOctokit, targetOctokit, sourceOrg, targetOrg, team, teamMap, targetIdpGroups, dryRun);
+      await processTeam(sourceOctokit, targetOctokit, sourceOrg, targetOrg, team, teamMap, dryRun, usernameMappings);
     }
 
-    const teamHierarchy = displayTeamHierarchy(sortedTeams, teamMap);
+    const teamHierarchy = displayTeamHierarchy(sortedTeams, teamMap, usernameMappings);
     logger.info('Team hierarchy:');
     logger.info(JSON.stringify(teamHierarchy, null, 2));
   } catch (error) {
     logger.error('Error migrating teams:', error.message);
-  }
-}
-
-/**
- * Fetches IdP group mappings from the target organization.
- * @param {Object} targetOctokit - Octokit instance for target organization
- * @param {string} org - Target organization name
- * @param {boolean} dryRun - Whether this is a dry run
- * @returns {Array} Array of IdP groups
- */
-async function getTargetIdpGroupMappings(targetOctokit, org, dryRun) {
-  if (dryRun) {
-    logger.info(`[Dry run] Would fetch IdP group mappings from target organization: ${org}`);
-    return [];
-  }
-
-  logger.info(`Fetching IdP group mappings from target organization: ${org}`);
-  try {
-    const { data } = await targetOctokit.orgs.listIdpGroupsForOrg({ org });
-    logger.info(`Successfully fetched ${data.groups.length} IdP groups from target organization: ${org}`);
-    return data.groups;
-  } catch (error) {
-    logger.warn(`Unable to fetch IdP group mappings for target organization ${org}. This is not critical if you're not using IdP groups. Error: ${error.message}`);
-    return [];
   }
 }
 
@@ -85,6 +116,32 @@ function sortTeamsByHierarchy(teams) {
 }
 
 /**
+ * Fetches repositories for a team with their permissions.
+ * @param {Object} sourceOctokit - Octokit instance for source organization
+ * @param {string} sourceOrg - Source organization name
+ * @param {Object} team - Team object
+ * @returns {Array} Array of repositories with permissions
+ */
+async function fetchTeamRepositories(sourceOctokit, sourceOrg, team) {
+  logger.debug(`Fetching repositories for team: ${team.name}`);
+  try {
+    const repos = await sourceOctokit.paginate(sourceOctokit.teams.listReposInOrg, {
+      org: sourceOrg,
+      team_slug: team.slug,
+      per_page: 100
+    });
+
+    return repos.map(repo => ({
+      name: repo.name,
+      permission: repo.permissions.admin ? 'admin' : (repo.permissions.push ? 'push' : 'pull')
+    }));
+  } catch (error) {
+    logger.error(`Error fetching repositories for team ${team.name}:`, error.message);
+    return [];
+  }
+}
+
+/**
  * Processes a single team for migration.
  * @param {Object} sourceOctokit - Octokit instance for source organization
  * @param {Object} targetOctokit - Octokit instance for target organization
@@ -92,21 +149,35 @@ function sortTeamsByHierarchy(teams) {
  * @param {string} targetOrg - Target organization name
  * @param {Object} team - Team object to process
  * @param {Map} teamMap - Map to store processed teams
- * @param {Array} targetIdpGroups - Array of target IdP groups
  * @param {boolean} dryRun - Whether this is a dry run
+ * @param {Map} usernameMappings - Map of source usernames to target usernames
  */
-async function processTeam(sourceOctokit, targetOctokit, sourceOrg, targetOrg, team, teamMap, targetIdpGroups, dryRun) {
+async function processTeam(sourceOctokit, targetOctokit, sourceOrg, targetOrg, team, teamMap, dryRun, usernameMappings) {
   logger.debug(`Processing team: ${team.name}`);
 
   try {
     const membersWithRoles = await fetchTeamMembers(sourceOctokit, sourceOrg, team);
-    const idpGroup = getIdpGroupForTeam(team, targetIdpGroups);
+    const repositories = await fetchTeamRepositories(sourceOctokit, sourceOrg, team);
 
     if (dryRun) {
-      logDryRunInfo(team, idpGroup);
-      teamMap.set(team.slug, { ...team, members: membersWithRoles, idpGroup });
+      logger.info(`[Dry run] Would create team: ${team.name}${team.parent ? ` (Parent: ${team.parent.name})` : ''}`);
+      
+      // Log repository details
+      repositories.forEach(repo => {
+        logger.info(`[Dry run] Would add repository ${repo.name} with ${repo.permission} permission`);
+      });
+      
+      // Log username mappings
+      membersWithRoles.forEach(member => {
+        const targetUsername = usernameMappings.get(member.login) || member.login;
+        if (targetUsername !== member.login) {
+          logger.info(`[Dry run] Would map user ${member.login} to ${targetUsername}`);
+        }
+      });
+      
+      teamMap.set(team.slug, { ...team, members: membersWithRoles, repositories });
     } else {
-      await createTeamInTargetOrg(targetOctokit, targetOrg, team, teamMap, idpGroup, membersWithRoles);
+      await createTeamInTargetOrg(targetOctokit, targetOrg, team, teamMap, membersWithRoles, repositories, usernameMappings);
     }
   } catch (error) {
     logger.error(`Error processing team ${team.name}: ${error.message}`);
@@ -150,53 +221,16 @@ async function fetchTeamMembers(sourceOctokit, sourceOrg, team) {
 }
 
 /**
- * Gets the IdP group for a team.
- * @param {Object} team - Team object
- * @param {Array} targetIdpGroups - Array of target IdP groups
- * @returns {Object|null} IdP group object or null
- */
-function getIdpGroupForTeam(team, targetIdpGroups) {
-  const envVarName = `${team.name.toUpperCase().replace(/ /g, '_')}_IDP_GROUP`;
-  const idpGroupName = process.env[envVarName];
-  logger.debug(`Looking for IdP group name in environment variable: ${envVarName}`);
-  
-  if (idpGroupName) {
-    const idpGroup = findIdpGroupByName(targetIdpGroups, idpGroupName);
-    if (idpGroup) {
-      logger.debug(`Found matching IdP group for team ${team.name}: ${idpGroup.group_name}`);
-      return idpGroup;
-    } else {
-      logger.warn(`Warning: IdP group name "${idpGroupName}" specified in .env file for team ${team.name} not found in target organization`);
-    }
-  } else {
-    logger.debug(`No IdP group mapping specified for team ${team.name}`);
-  }
-  
-  return null;
-}
-
-/**
- * Logs dry run information for a team.
- * @param {Object} team - Team object
- * @param {Object|null} idpGroup - IdP group object or null
- */
-function logDryRunInfo(team, idpGroup) {
-  logger.info(`[Dry run] Would create team: ${team.name}${team.parent ? ` (Parent: ${team.parent.name})` : ''}`);
-  if (idpGroup) {
-    logger.info(`[Dry run] Would apply IdP group mapping: ${idpGroup.group_name}`);
-  }
-}
-
-/**
  * Creates a team in the target organization.
  * @param {Object} targetOctokit - Octokit instance for target organization
  * @param {string} targetOrg - Target organization name
  * @param {Object} team - Team object to create
  * @param {Map} teamMap - Map to store processed teams
- * @param {Object|null} idpGroup - IdP group object or null
  * @param {Array} membersWithRoles - Array of team members with roles
+ * @param {Array} repositories - Array of repositories with permissions
+ * @param {Map} usernameMappings - Map of source usernames to target usernames
  */
-async function createTeamInTargetOrg(targetOctokit, targetOrg, team, teamMap, idpGroup, membersWithRoles) {
+async function createTeamInTargetOrg(targetOctokit, targetOrg, team, teamMap, membersWithRoles, repositories, usernameMappings) {
   try {
     const newTeamData = {
       org: targetOrg,
@@ -216,36 +250,15 @@ async function createTeamInTargetOrg(targetOctokit, targetOrg, team, teamMap, id
     logger.info(`Creating team in target organization: ${team.name}`);
     const { data: newTeam } = await targetOctokit.teams.create(newTeamData);
 
-    if (idpGroup) {
-      await applyIdpGroupMapping(targetOctokit, targetOrg, newTeam, idpGroup);
-    }
-
-    teamMap.set(team.slug, { ...newTeam, members: membersWithRoles, idpGroup });
+    teamMap.set(team.slug, { ...newTeam, members: membersWithRoles, repositories });
 
     logger.info(`Successfully created team: ${newTeam.name}${team.parent ? ` (Parent: ${team.parent.name})` : ''}`);
 
-    await migrateTeamMembers(targetOctokit, targetOrg, newTeam, membersWithRoles);
-    await migrateTeamRepositories(targetOctokit, targetOrg, team, newTeam);
+    await migrateTeamMembers(targetOctokit, targetOrg, newTeam, membersWithRoles, usernameMappings);
+    await migrateTeamRepositories(targetOctokit, targetOrg, newTeam, repositories);
   } catch (error) {
     logger.error(`Error creating team ${team.name} in target organization: ${error.message}`);
   }
-}
-
-/**
- * Applies IdP group mapping to a team.
- * @param {Object} targetOctokit - Octokit instance for target organization
- * @param {string} targetOrg - Target organization name
- * @param {Object} newTeam - Newly created team object
- * @param {Object} idpGroup - IdP group object
- */
-async function applyIdpGroupMapping(targetOctokit, targetOrg, newTeam, idpGroup) {
-  logger.info(`Applying IdP group mapping for team ${newTeam.name}: ${idpGroup.group_name}`);
-  await targetOctokit.teams.updateSyncGroupMappings({
-    org: targetOrg,
-    team_slug: newTeam.slug,
-    groups: [idpGroup]
-  });
-  logger.info(`Successfully applied IdP group mapping for team ${newTeam.name}: ${idpGroup.group_name}`);
 }
 
 /**
@@ -254,18 +267,25 @@ async function applyIdpGroupMapping(targetOctokit, targetOrg, newTeam, idpGroup)
  * @param {string} targetOrg - Target organization name
  * @param {Object} newTeam - Newly created team object
  * @param {Array} membersWithRoles - Array of team members with roles
+ * @param {Map} usernameMappings - Map of source usernames to target usernames
  */
-async function migrateTeamMembers(targetOctokit, targetOrg, newTeam, membersWithRoles) {
+async function migrateTeamMembers(targetOctokit, targetOrg, newTeam, membersWithRoles, usernameMappings) {
   logger.info(`Migrating members for team: ${newTeam.name}`);
   for (const member of membersWithRoles) {
     try {
+      const targetUsername = usernameMappings.get(member.login) || member.login;
+      
+      if (targetUsername !== member.login) {
+        logger.debug(`Mapping user ${member.login} to ${targetUsername}`);
+      }
+
       await targetOctokit.teams.addOrUpdateMembershipForUserInOrg({
         org: targetOrg,
         team_slug: newTeam.slug,
-        username: member.login,
+        username: targetUsername,
         role: member.role
       });
-      logger.debug(`Added ${member.login} to team ${newTeam.name} with role ${member.role}`);
+      logger.debug(`Added ${targetUsername} to team ${newTeam.name} with role ${member.role}`);
     } catch (error) {
       logger.warn(`Unable to add ${member.login} to team ${newTeam.name}: ${error.message}`);
     }
@@ -276,62 +296,39 @@ async function migrateTeamMembers(targetOctokit, targetOrg, newTeam, membersWith
  * Migrates team repositories to the new team.
  * @param {Object} targetOctokit - Octokit instance for target organization
  * @param {string} targetOrg - Target organization name
- * @param {Object} team - Original team object
  * @param {Object} newTeam - Newly created team object
+ * @param {Array} repositories - Array of repositories with permissions
  */
-async function migrateTeamRepositories(targetOctokit, targetOrg, team, newTeam) {
-  logger.info(`Migrating repositories for team: ${newTeam.name}`);
-  try {
-    const repos = await targetOctokit.paginate(targetOctokit.teams.listReposInOrg, {
-      org: targetOrg,
-      team_slug: newTeam.slug,
-      per_page: 100
-    });
-
-    for (const repo of repos) {
-      try {
-        await targetOctokit.teams.addOrUpdateRepoPermissionsInOrg({
-          org: targetOrg,
-          team_slug: newTeam.slug,
-          owner: targetOrg,
-          repo: repo.name,
-          permission: repo.permissions.admin ? 'admin' : (repo.permissions.push ? 'push' : 'pull')
-        });
-        logger.debug(`Added repository ${repo.name} to team ${newTeam.name} with permissions ${repo.permissions.admin ? 'admin' : (repo.permissions.push ? 'push' : 'pull')}`);
-      } catch (error) {
-        logger.warn(`Unable to set permissions for repository ${repo.name} in team ${newTeam.name}: ${error.message}`);
-      }
+async function migrateTeamRepositories(targetOctokit, targetOrg, newTeam, repositories) {
+  logger.info(`Migrating ${repositories.length} repositories for team: ${newTeam.name}`);
+  
+  for (const repo of repositories) {
+    try {
+      await targetOctokit.teams.addOrUpdateRepoPermissionsInOrg({
+        org: targetOrg,
+        team_slug: newTeam.slug,
+        owner: targetOrg,
+        repo: repo.name,
+        permission: repo.permission
+      });
+      logger.debug(`Added repository ${repo.name} to team ${newTeam.name} with permission ${repo.permission}`);
+    } catch (error) {
+      logger.warn(`Unable to set permissions for repository ${repo.name} in team ${newTeam.name}: ${error.message}`);
     }
-  } catch (error) {
-    logger.error(`Error migrating repositories for team ${newTeam.name}: ${error.message}`);
   }
 }
 
 /**
- * Displays team hierarchy with members and IdP mappings.
+ * Displays team hierarchy with members and repository details.
  * @param {Array} teams - Array of teams
  * @param {Map} teamMap - Map of processed teams
+ * @param {Map} usernameMappings - Map of source usernames to target usernames
  * @param {string|null} parentSlug - Parent team slug
  * @param {number} level - Current hierarchy level
  * @returns {Array} Array representing team hierarchy
  */
-function displayTeamHierarchy(teams, teamMap, parentSlug = null, level = 0) {
-  const idpGroupOverride = process.env.IDP_GROUP_OVERRIDE;
-  const teamIdpGroups = {};
+function displayTeamHierarchy(teams, teamMap, usernameMappings, parentSlug = null, level = 0) {
   const result = [];
-
-  if (idpGroupOverride) {
-    const overrideValues = idpGroupOverride.split(',');
-  
-    if (overrideValues.length === 1) {
-      teamIdpGroups.default = overrideValues[0];
-    } else {
-      overrideValues.forEach((teamIdpGroup) => {
-        const [team, idpGroup] = teamIdpGroup.split('=');
-        teamIdpGroups[team] = idpGroup;
-      });
-    }
-  }
 
   teams
     .filter(team => (parentSlug === null && !team.parent) || (team.parent && team.parent.slug === parentSlug))
@@ -339,27 +336,24 @@ function displayTeamHierarchy(teams, teamMap, parentSlug = null, level = 0) {
       const teamInfo = teamMap.get(team.slug);
       const teamData = {
         name: team.name,
-        idpGroup: teamIdpGroups[team.name] || teamIdpGroups.default || (teamInfo.idpGroup ? teamInfo.idpGroup.group_name : null),
-        members: teamInfo.members ? teamInfo.members.map(member => ({
-          login: member.login,
-          role: member.role
+        members: teamInfo.members ? teamInfo.members.map(member => {
+          const targetUsername = usernameMappings.get(member.login) || member.login;
+          return {
+            sourceLogin: member.login,
+            targetLogin: targetUsername,
+            role: member.role
+          };
+        }) : [],
+        repositories: teamInfo.repositories ? teamInfo.repositories.map(repo => ({
+          name: repo.name,
+          permission: repo.permission
         })) : []
       };
       result.push(teamData);
-      const childTeams = displayTeamHierarchy(teams, teamMap, team.slug, level + 1);
+      const childTeams = displayTeamHierarchy(teams, teamMap, usernameMappings, team.slug, level + 1);
       if (childTeams.length > 0) {
         teamData.children = childTeams;
       }
     });
   return result;
-}
-
-/**
- * Finds an IdP group by name.
- * @param {Array} groups - Array of IdP groups
- * @param {string} name - Name of the IdP group to find
- * @returns {Object|undefined} The found IdP group or undefined
- */
-function findIdpGroupByName(groups, name) {
-  return groups.find(group => group.group_name === name);
 }

@@ -1,4 +1,3 @@
-
 import yargs from 'yargs'
 import { hideBin } from 'yargs/helpers'
 import dotenv from "dotenv";
@@ -20,7 +19,6 @@ dotenv.config();
  * @returns {Octokit} - A configured Octokit instance.
  */
 async function createOctokitInstance(token, verbose) {
-
   const myFetch = (url, opts) => {
     return undiciFetch(url, {
       ...opts,
@@ -104,6 +102,7 @@ async function runMigration(argv, migrationFunction, component) {
     "target-org": targetCLI, 
     "dry-run": dryRun,
     "package-type": packageType,
+    "username-mapping": usernameMappingFile,
     verbose
   } = argv;
   
@@ -139,7 +138,8 @@ async function runMigration(argv, migrationFunction, component) {
       targetOrgToUse,
       packageType,
       dryRun,
-      verbose
+      verbose,
+      usernameMappingFile
     );
   } catch (error) {
     console.error(`Migration of ${component} failed: ${error.message}`);
@@ -210,6 +210,10 @@ yargs(hideBin(process.argv))
           describe: "Enable verbose output",
           default: false,
         })
+        .option("username-mapping", {
+          type: "string",
+          describe: "Path to CSV file containing username mappings",
+        })
         .help();
     },
     handler: async (argv) => {
@@ -237,4 +241,3 @@ yargs(hideBin(process.argv))
   .demandCommand(1, "You need to specify a command to run")
   .help()
   .argv;
-
